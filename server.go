@@ -27,6 +27,7 @@ func process(conn net.Conn, c *contactBookMap, parentCtx context.Context, parent
 	defer parentWaitGroup.Done()
 	childCtx, childCancel := context.WithCancel(parentCtx)
 	defer childCancel()
+	defer conn.Close()
 	defer func() {
 		<-childCtx.Done()
 		conn.Close()
