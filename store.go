@@ -37,7 +37,7 @@ func (c *contactBookMap) Set(key []byte, val []byte) { //recieve a struct which 
 	}
 }
 
-func (c *contactBookMap) Get(key []byte) ([]byte, bool) {
+func (c *contactBookMap) Get(key []byte, copyVal []byte) ([]byte, bool) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
@@ -45,7 +45,6 @@ func (c *contactBookMap) Get(key []byte) ([]byte, bool) {
 	if !ok {
 		return nil, false
 	}
-	copyVal := make([]byte, len(rec.data))
 	copy(copyVal, rec.data)
 	return copyVal, true
 }

@@ -111,12 +111,19 @@ func execute(conn net.Conn, commandLine []byte, c *contactBookMap, bufferPool *s
 			conn.Write(invalid)
 			return
 		}
-		output, ok := c.Get((args[0]))
+		buffHeaderPtr := bufferPool.Get().(*[]byte)
+		dst := *buffHeaderPtr
+		defer func() {
+			clear(*buffHeaderPtr)
+			bufferPool.Put(buffHeaderPtr)
+		}()
+		dst = dst[:1024] //stretches length up to cap
+		dst, ok := c.Get((args[0]), dst)
 		if !ok {
 			conn.Write(emptyVal)
 			return
 		}
-		conn.Write(output)
+		conn.Write(dst)
 		conn.Write(success)
 	case "DELETE":
 		if len(args) != 1 {
