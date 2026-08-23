@@ -45,8 +45,9 @@ func (c *contactBookMap) Get(key []byte, copyVal []byte) ([]byte, bool) {
 	if !ok {
 		return nil, false
 	}
-	copy(copyVal, rec.data)
-	return copyVal, true
+
+	n := copy(copyVal, rec.data)
+	return copyVal[:n], true // only returns the n # of bytes that was copied and not the entire 1024 slice
 }
 
 func (c *contactBookMap) Delete(key []byte) {
