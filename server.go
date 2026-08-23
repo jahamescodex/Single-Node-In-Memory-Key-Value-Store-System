@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"io"
 	"log"
@@ -23,15 +22,17 @@ var bufferPool = sync.Pool{
 	},
 }
 
-func process(conn net.Conn, c *contactBookMap, parentCtx context.Context, parentWaitGroup *sync.WaitGroup) {
+func process(s *Server, conn net.Conn, c *contactBookMap, parentWaitGroup *sync.WaitGroup) {
 	defer parentWaitGroup.Done()
-	childCtx, childCancel := context.WithCancel(parentCtx)
-	defer childCancel()
-	defer conn.Close()
+
 	defer func() {
-		<-childCtx.Done()
-		conn.Close()
+		s.mu.Lock()
+		delete(s.connM, conn)
+		s.mu.Unlock()
 	}()
+
+	defer conn.Close() // LIFO
+
 	handleClient(conn, c, &bufferPool)
 }
 
@@ -53,9 +54,7 @@ func handleClient(conn net.Conn, c *contactBookMap, bufferPool *sync.Pool) {
 
 		n, err := conn.Read(fullBuffer[processed:]) // research about connection reset by peer : never sending a clean FIN handshake
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return
-			} else if errors.Is(err, io.EOF) {
+			if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) {
 				return
 			}
 			log.Println("Error:", err) // socket has transitioned out of the ESTABLISHED state
