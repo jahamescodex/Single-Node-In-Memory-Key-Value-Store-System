@@ -89,4 +89,40 @@ func BenchmarkTests(b *testing.B) {
 
 		})
 	})
+
+	b.Run("Delete Test", func(b *testing.B) {
+		testBookMap := NewContactBookMap()
+
+		b.ReportAllocs()
+		b.ResetTimer()
+
+		b.RunParallel(func(pb *testing.PB) {
+
+			b.StopTimer()
+			keys := make([][]byte, 1000)
+			values := make([][]byte, 1000)
+			b.StartTimer()
+
+			refill := func() {
+				for i := 0; i < 1000; i++ {
+					keys[i] = []byte(fmt.Sprintf("User-%v", i))
+					values[i] = []byte(fmt.Sprintf("User-%v", i))
+					testBookMap.Set(keys[i], values[i])
+				}
+			}
+			iteration := 0
+			currentLength := len(keys)
+			for pb.Next() {
+				iteration = iteration % len(keys)
+				testBookMap.Delete(keys[iteration])
+				currentLength -= 1
+
+				if currentLength == 0 {
+					b.StopTimer()
+					refill()
+				}
+				b.StartTimer()
+			}
+		})
+	})
 }
