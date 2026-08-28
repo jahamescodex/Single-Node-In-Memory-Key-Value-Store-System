@@ -64,9 +64,9 @@ func (s *Server) Start() error {
 			conn.Close()
 			continue
 		}
+		waitGroup.Add(1)
 		s.connM[conn] = struct{}{}
 		s.mu.Unlock()
-		waitGroup.Add(1)
 		go process(s, conn, s.storage, &waitGroup)
 	}
 
