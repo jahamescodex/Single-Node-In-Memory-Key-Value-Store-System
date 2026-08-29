@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -31,23 +32,23 @@ func BenchmarkTests(b *testing.B) {
 	b.Run("Set Test", func(childB *testing.B) {
 		testBookMap := NewContactBookMap()
 
-		key := make([][]byte, 1000)
-		value := make([][]byte, 1000)
+		key := make([][]byte, childB.N)
+		value := make([][]byte, childB.N)
 
-		for i := 0; i < 1000; i++ {
+		for i := 0; i < childB.N; i++ {
 			key[i] = []byte(fmt.Sprintf("User-%v", i))
 			value[i] = []byte(fmt.Sprintf("User-%v", i))
 		}
+
+		var iteration atomic.Uint64
 
 		childB.ResetTimer()
 		childB.ReportAllocs()
 
 		childB.RunParallel(func(setPb *testing.PB) {
-			iteration := 0
 			for setPb.Next() {
-				iteration = iteration % len(key)
-				testBookMap.Set(key[iteration], value[iteration])
-				iteration++
+				idx := iteration.Add(1) - 1
+				testBookMap.Set(key[int(idx)], value[int(idx)])
 			}
 		})
 	})
@@ -56,14 +57,16 @@ func BenchmarkTests(b *testing.B) {
 		testBookMap := NewContactBookMap()
 		mutex := sync.Mutex{}
 
-		key := make([][]byte, 1000)
-		value := make([][]byte, 1000)
+		key := make([][]byte, childB.N)
+		value := make([][]byte, childB.N)
 
-		for i := 0; i < 1000; i++ {
+		for i := 0; i < childB.N; i++ {
 			key[i] = []byte(fmt.Sprintf("User-%v", i))
 			value[i] = []byte(fmt.Sprintf("User-%v", i))
 			testBookMap.Set(key[i], value[i])
 		}
+
+		var iteration atomic.Uint64
 
 		childB.ResetTimer()
 		childB.ReportAllocs()
@@ -71,57 +74,41 @@ func BenchmarkTests(b *testing.B) {
 		childB.RunParallel(func(getPb *testing.PB) {
 			var localFaucet []byte
 			localDst := make([]byte, 1024)
-			iteration := 0
 
 			// still gets allocated | 10 * (1024) B / b.N (# of operations) rounded to integers
 
 			for getPb.Next() {
-				iteration = iteration % len(key)
-				faucet, status := testBookMap.Get(key[iteration], localDst)
+				faucet, status := testBookMap.Get(key[int(iteration.Add(1)-1)], localDst)
 				if status {
 					localFaucet = faucet
 				}
-				iteration++
 			}
 			mutex.Lock()
 			globalSink = localFaucet
 			mutex.Unlock()
-
 		})
 	})
 
-	b.Run("Delete Test", func(b *testing.B) {
+	b.Run("Delete Test", func(childB *testing.B) {
 		testBookMap := NewContactBookMap()
 
-		b.ReportAllocs()
-		b.ResetTimer()
+		keys := make([][]byte, childB.N)
+		values := make([][]byte, childB.N)
 
-		b.RunParallel(func(pb *testing.PB) {
+		for i := 0; i < childB.N; i++ {
+			keys[i] = []byte(fmt.Sprintf("User-%v", i))
+			values[i] = []byte(fmt.Sprintf("User-%v", i))
+			testBookMap.Set(keys[i], values[i])
+		}
 
-			b.StopTimer()
-			keys := make([][]byte, 1000)
-			values := make([][]byte, 1000)
-			b.StartTimer()
+		var iteration atomic.Uint64
 
-			refill := func() {
-				for i := 0; i < 1000; i++ {
-					keys[i] = []byte(fmt.Sprintf("User-%v", i))
-					values[i] = []byte(fmt.Sprintf("User-%v", i))
-					testBookMap.Set(keys[i], values[i])
-				}
-			}
-			iteration := 0
-			currentLength := len(keys)
+		childB.ReportAllocs()
+		childB.ResetTimer()
+
+		childB.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
-				iteration = iteration % len(keys)
-				testBookMap.Delete(keys[iteration])
-				currentLength -= 1
-
-				if currentLength == 0 {
-					b.StopTimer()
-					refill()
-				}
-				b.StartTimer()
+				testBookMap.Delete(keys[int(iteration.Add(1)-1)])
 			}
 		})
 	})
