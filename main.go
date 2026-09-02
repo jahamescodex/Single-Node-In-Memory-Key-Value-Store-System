@@ -92,7 +92,7 @@ func (s *Server) Close() {
 }
 
 func main() {
-	contactBook := NewContactBookMap()
+	contactBook := NewContactBookMap(1000)
 	serverAddr := NewServer(":3000", contactBook)
 	if err := serverAddr.Start(); err != nil {
 		log.Fatalf("Server exited with error: %v", err)
