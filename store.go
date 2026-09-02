@@ -7,6 +7,74 @@ import (
 	"sync"
 )
 
+type shardedContactBookMap struct { // big database with a count of
+	table      []*shard // slice of shards of dataset
+	shardCount int      // number of shards N ?
+}
+
+type shard struct {
+	mu sync.RWMutex
+	m  map[string]Record
+}
+
+func fnv1a(data []byte) uint32 { // gives us the random hash
+	const (
+		base  uint32 = 2166136261
+		prime uint32 = 16777619
+	)
+	hash := base
+
+	for _, b := range data {
+		hash ^= uint32(b)
+		hash *= prime
+
+	}
+	return uint32(hash)
+}
+
+func (s *shardedContactBookMap) getShardIndex(key []byte) uint32 {
+	if len(s.table) == 1 {
+		return 0
+	}
+	hash := fnv1a(key)
+	nShards := uint32(len(s.table))
+	return (nShards - 1) & hash
+}
+
+func computeShardCount(shardCount int) int {
+	if shardCount <= 16 {
+		return 16
+	}
+
+	n := shardCount - 1
+	n |= n >> 1
+	n |= n >> 2
+	n |= n >> 4
+	n |= n >> 8
+	n |= n >> 16
+
+	return n + 1
+}
+
+func MakeConcurrentMap(shardCount int, preAllocatedSpace int) *shardedContactBookMap {
+	if shardCount == 1 {
+		table := []*shard{{m: make(map[string]Record, preAllocatedSpace)}}
+		return &shardedContactBookMap{table: table, shardCount: 1}
+	}
+	shardCount = computeShardCount(shardCount)
+	preAllocatedSpace = preAllocatedSpace / shardCount
+
+	if preAllocatedSpace < shardCount {
+		preAllocatedSpace = 1
+	}
+
+	table := make([]*shard, shardCount)
+	for i := 0; i < shardCount; i++ {
+		table[i] = &shard{m: make(map[string]Record, preAllocatedSpace)}
+	}
+	return &shardedContactBookMap{table: table, shardCount: shardCount}
+}
+
 type contactBookMap struct {
 	contactBook map[string]Record
 	lock        sync.RWMutex
@@ -129,9 +197,9 @@ func digitLength(input int) int {
 	return length
 }
 
-func NewContactBookMap() *contactBookMap {
+func NewContactBookMap(n int) *contactBookMap {
 	return &contactBookMap{
-		contactBook: make(map[string]Record),
+		contactBook: make(map[string]Record, n),
 		HWM:         0,
 		counterOPS:  0,
 	}
