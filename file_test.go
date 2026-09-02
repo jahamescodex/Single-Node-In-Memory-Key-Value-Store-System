@@ -30,14 +30,14 @@ func BenchmarkTests(b *testing.B) {
 	// })
 
 	b.Run("Set Test", func(childB *testing.B) {
-		testBookMap := NewContactBookMap()
+		testBookMap := NewContactBookMap(childB.N)
 
 		key := make([][]byte, childB.N)
 		value := make([][]byte, childB.N)
 
 		for i := 0; i < childB.N; i++ {
-			key[i] = []byte(fmt.Sprintf("User-%v", i))
-			value[i] = []byte(fmt.Sprintf("User-%v", i))
+			key[i] = []byte(fmt.Sprintf("Client-%v", i))
+			value[i] = []byte(fmt.Sprintf("Customer-%v", i))
 		}
 
 		var iteration atomic.Uint64
@@ -54,7 +54,7 @@ func BenchmarkTests(b *testing.B) {
 	})
 
 	b.Run("Get Test", func(childB *testing.B) {
-		testBookMap := NewContactBookMap()
+		testBookMap := NewContactBookMap(childB.N)
 		mutex := sync.Mutex{}
 
 		key := make([][]byte, childB.N)
@@ -90,7 +90,7 @@ func BenchmarkTests(b *testing.B) {
 	})
 
 	b.Run("Delete Test", func(childB *testing.B) {
-		testBookMap := NewContactBookMap()
+		testBookMap := NewContactBookMap(childB.N)
 
 		keys := make([][]byte, childB.N)
 		values := make([][]byte, childB.N)
