@@ -17,14 +17,14 @@ type shard struct {
 	m  map[string]Record
 }
 
-func fnv1a(data []byte) uint32 { // gives us the random hash
+func fnv1a(key string) uint32 { // gives us the random hash
 	const (
-		base  uint32 = 2166136261
-		prime uint32 = 16777619
+		base  uint32 = 0x01000193
+		prime uint32 = 0x811C9DC5
 	)
 	hash := base
 
-	for _, b := range data {
+	for _, b := range []byte(key) {
 		hash ^= uint32(b)
 		hash *= prime
 
@@ -32,47 +32,56 @@ func fnv1a(data []byte) uint32 { // gives us the random hash
 	return uint32(hash)
 }
 
-func (s *shardedContactBookMap) getShardIndex(key []byte) uint32 {
-	if len(s.table) == 1 {
+func (s *shardedContactBookMap) getShardIndex(key string) uint32 {
+	if s.shardCount == 1 {
 		return 0
 	}
 	hash := fnv1a(key)
-	nShards := uint32(len(s.table))
+	nShards := uint32(s.shardCount)
 	return (nShards - 1) & hash
 }
 
 func computeShardCount(shardCount int) int {
-	if shardCount <= 16 {
-		return 16
+	if shardCount <= 0 {
+		return 1
 	}
 
-	n := shardCount - 1
-	n |= n >> 1
-	n |= n >> 2
-	n |= n >> 4
-	n |= n >> 8
-	n |= n >> 16
+	u := uint32(shardCount) // 2^31
+	u--
+	u |= u >> 1
+	u |= u >> 2
+	u |= u >> 4
+	u |= u >> 8
+	u |= u >> 16
+	u++
 
-	return n + 1
+	if u > 1<<30 || u == 0{
+		return 1 << 30
+	}
+
+	return int(u)
 }
 
 func MakeConcurrentMap(shardCount int, preAllocatedSpace int) *shardedContactBookMap {
-	if shardCount == 1 {
-		table := []*shard{{m: make(map[string]Record, preAllocatedSpace)}}
-		return &shardedContactBookMap{table: table, shardCount: 1}
-	}
 	shardCount = computeShardCount(shardCount)
-	preAllocatedSpace = preAllocatedSpace / shardCount
+	if preAllocatedSpace < 0 {
+		preAllocatedSpace = 0
+	}
 
-	if preAllocatedSpace < shardCount {
-		preAllocatedSpace = 1
+	perShardSpace := preAllocatedSpace / shardCount
+	if perShardSpace <= 0 {
+		perShardSpace = 1
 	}
 
 	table := make([]*shard, shardCount)
+
 	for i := 0; i < shardCount; i++ {
-		table[i] = &shard{m: make(map[string]Record, preAllocatedSpace)}
+		table[i] = &shard{m: make(map[string]Record, perShardSpace)}
 	}
-	return &shardedContactBookMap{table: table, shardCount: shardCount}
+	return &shardedContactBookMap{
+		table:      table,
+		shardCount: shardCount,
+	}
 }
 
 type contactBookMap struct {
