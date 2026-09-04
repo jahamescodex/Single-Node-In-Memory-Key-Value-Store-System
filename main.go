@@ -14,19 +14,11 @@ import (
 type Server struct {
 	listener     net.Listener // listener interface
 	listenerAddr string       // port
-	storage      *contactBookMap
+	storage      Store
 	isClosed     bool
 
 	mu    sync.Mutex
 	connM map[net.Conn]struct{}
-}
-
-func NewServer(listenerAddr string, storage *contactBookMap) *Server {
-	return &Server{
-		listenerAddr: listenerAddr,
-		storage:      storage,
-		connM:        make(map[net.Conn]struct{}),
-	}
 }
 
 func (s *Server) Start() error {
@@ -91,9 +83,18 @@ func (s *Server) Close() {
 	}
 }
 
+func NewServer(listenerAddr string, storage Store) *Server { // store in this case can be sharded or non_sharded
+	return &Server{
+		listenerAddr: listenerAddr,
+		storage:      storage,
+		connM:        make(map[net.Conn]struct{}),
+	}
+}
+
 func main() {
-	contactBook := NewContactBookMap(1000)
-	serverAddr := NewServer(":3000", contactBook)
+	// contactBook := NewContactBookMap(1024)
+	shardedContactBookMap := MakeShardedMap(16, 1024) // Store implementation
+	serverAddr := NewServer(":3000", shardedContactBookMap)
 	if err := serverAddr.Start(); err != nil {
 		log.Fatalf("Server exited with error: %v", err)
 	}
