@@ -14,6 +14,7 @@ var invalid = []byte("Invalid: Does not have enough arguments\n")
 var size = []byte("ERROR: Arguments too big\n")
 var emptyVal = []byte("Null\n")
 var success = []byte("Success\n")
+var nonCommand = []byte("Please enter a valid command\n")
 
 var bufferPool = sync.Pool{
 	New: func() any {
@@ -22,7 +23,7 @@ var bufferPool = sync.Pool{
 	},
 }
 
-func process(s *Server, conn net.Conn, c *contactBookMap, parentWaitGroup *sync.WaitGroup) {
+func process(s *Server, conn net.Conn, c Store, parentWaitGroup *sync.WaitGroup) {
 	defer parentWaitGroup.Done()
 
 	defer func() {
@@ -36,7 +37,7 @@ func process(s *Server, conn net.Conn, c *contactBookMap, parentWaitGroup *sync.
 	handleClient(conn, c, &bufferPool)
 }
 
-func handleClient(conn net.Conn, c *contactBookMap, bufferPool *sync.Pool) {
+func handleClient(conn net.Conn, c Store, bufferPool *sync.Pool) {
 	log.Printf("Client: %s just connected\n", conn.RemoteAddr())
 	buffHeaderPtr := bufferPool.Get().(*[]byte) // pointing to the 24-byte struct byte slice-header
 
@@ -79,7 +80,7 @@ func handleClient(conn net.Conn, c *contactBookMap, bufferPool *sync.Pool) {
 	}
 }
 
-func execute(conn net.Conn, commandLine []byte, c *contactBookMap, bufferPool *sync.Pool) {
+func execute(conn net.Conn, commandLine []byte, c Store, bufferPool *sync.Pool) {
 	commandLine = bytes.TrimSpace(commandLine) // clears leading /n /r or white spaces
 
 	if len(commandLine) == 0 {
@@ -138,5 +139,7 @@ func execute(conn net.Conn, commandLine []byte, c *contactBookMap, bufferPool *s
 			bufferPool.Put(buffer)
 		}()
 		c.List(conn, buffer)
+	default:
+		conn.Write(nonCommand)
 	}
 }
