@@ -8,7 +8,7 @@ import (
 )
 
 type contactBookMap struct {
-	contactBook map[string]Record
+	contactBook map[string]*Record
 	lock        sync.RWMutex
 	HWM         int
 	counterOPS  int
@@ -34,7 +34,7 @@ func (c *contactBookMap) Set(key []byte, val []byte) { //recieve a struct which 
 
 	copyVal := make([]byte, len(val)) // this is the 24byte struct, allocated on the function execution stack frame; this contains a pointer that points to the backing array that is on the heap
 	copy(copyVal, val)                //dst, src
-	c.contactBook[sKey] = Record{
+	c.contactBook[sKey] = &Record{
 		data: copyVal,
 		ID:   c.counterOPS,
 	} // increased the length of the map
@@ -64,7 +64,7 @@ func (c *contactBookMap) Delete(key []byte) {
 	currentHWM := c.HWM
 	delete(c.contactBook, string(key))
 	if len(c.contactBook) < (currentHWM/4) && len(c.contactBook) > 8 {
-		copyMap := make(map[string]Record, len(c.contactBook))
+		copyMap := make(map[string]*Record, len(c.contactBook))
 		for k, v := range c.contactBook {
 			copyMap[k] = v
 		}
@@ -144,7 +144,7 @@ func digitLength(input int) int {
 
 func NewContactBookMap(n int) *contactBookMap {
 	return &contactBookMap{
-		contactBook: make(map[string]Record, n),
+		contactBook: make(map[string]*Record, n),
 		HWM:         0,
 		counterOPS:  0,
 	}

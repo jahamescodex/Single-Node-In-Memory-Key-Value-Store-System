@@ -13,7 +13,7 @@ type shardedContactBookMap struct { // big database with a count of
 
 type shard struct {
 	mu      sync.RWMutex
-	m       map[string]Record
+	m       map[string]*Record
 	kvCount int
 	HWM     int
 }
@@ -24,12 +24,17 @@ func (c *shardedContactBookMap) Set(key []byte, val []byte) {
 
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
+
+	sKey := string(key)
+	if rec, exists := shard.m[sKey]; exists {
+		rec.data = append(rec.data[:0], val...)
+		return
+	}
+
 	shard.kvCount++
 	copyVal := make([]byte, len(val))
 	copy(copyVal, val)
-	shard.m[string(key)] = Record{
-		data: copyVal,
-	}
+	shard.m[sKey] = &Record{data: copyVal}
 
 	if len(shard.m) > shard.HWM {
 		shard.HWM = len(shard.m)
@@ -43,8 +48,8 @@ func (c *shardedContactBookMap) Get(key []byte, copyVal []byte) ([]byte, bool) {
 	shard.mu.RLock()
 	defer shard.mu.RUnlock()
 
-	rec, ok := shard.m[string(key)]
-	if !ok {
+	rec, exists := shard.m[string(key)]
+	if !exists {
 		return nil, false
 	}
 
@@ -62,9 +67,11 @@ func (c *shardedContactBookMap) Delete(key []byte) {
 	currentHWM := shard.HWM
 	delete(shard.m, string(key))
 	if len(shard.m) < (currentHWM/4) && len(shard.m) > 8 {
-		copyMap := make(map[string]Record, len(shard.m))
-		for k, v := range shard.m {
-			copyMap[k] = v
+		copyMap := make(map[string]*Record, len(shard.m))
+		for k, rec := range shard.m {
+			copyMap[k] = &Record{
+				data: rec.data,
+			}
 		}
 		shard.m = copyMap
 		shard.HWM = len(shard.m)
@@ -86,7 +93,7 @@ func (c *shardedContactBookMap) List(conn net.Conn, buffer *[]byte) { // table o
 
 		shard.mu.RLock()
 		for k, v := range shard.m {
-			ghost_table = append(ghost_table, s_ghost{key: k, data: v.data})
+			ghost_table = append(ghost_table, s_ghost{key: k, data: v.data}) //capacity will change (amortized allocation cost)
 		}
 		shard.mu.RUnlock()
 
@@ -168,7 +175,7 @@ func computeShardCount(shardCount int) int {
 	return int(u)
 }
 
-func MakeShardedMap(shardCount int, preAllocatedSpace int) *shardedContactBookMap {
+func NewShardedMap(shardCount int, preAllocatedSpace int) *shardedContactBookMap {
 	shardCount = computeShardCount(shardCount)
 	if preAllocatedSpace < 0 {
 		preAllocatedSpace = 0
@@ -182,7 +189,7 @@ func MakeShardedMap(shardCount int, preAllocatedSpace int) *shardedContactBookMa
 	table := make([]*shard, shardCount)
 
 	for i := 0; i < shardCount; i++ {
-		table[i] = &shard{m: make(map[string]Record, perShardSpace)}
+		table[i] = &shard{m: make(map[string]*Record, perShardSpace)}
 	}
 	return &shardedContactBookMap{
 		table:      table,
