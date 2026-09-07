@@ -2,122 +2,136 @@ package main
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
 )
 
-var globalSink []byte
+var globalSink []int
+var mapTypes = []struct {
+	name string
+	init func(n int) Store
+}{
+	{
+		name: "No-lock-stripping",
+		init: func(n int) Store { return NewContactBookMap(n) },
+	},
+	{
+		name: "With-lock-stripping",
+		init: func(n int) Store { return NewShardedMap(16, n) },
+	},
+}
 
-// var bruh sync.Once
+var loadCases = []int{100, 1000, 10000, 100000, 1000000}
 
-//	func init() {
-//		log.Println("Set Test")
-//	}
+var commandCases = []string{"Get"}
 
-func BenchmarkTests(b *testing.B) {
+func BenchmarkColdStartAllocations(b *testing.B) {
+	for _, mC := range mapTypes {
+		for _, lC := range loadCases {
+			benchMarkName := fmt.Sprintf("Cold-Start/%s/Load-%d", mC.name, lC)
+			b.Run(benchMarkName, func(childB *testing.B) {
 
-	mapToTest := []struct {
-		name string
-		init func(n int) Store
-	}{
-		{
-			name: "Single Map",
-			init: func(n int) Store { return NewContactBookMap(n) },
-		},
-		{
-			name: "Sharded Map",
-			init: func(n int) Store { return MakeShardedMap(16, n) },
-		},
-	}
+				key := make([][]byte, lC)
+				val := make([][]byte, lC)
 
-	for _, mapToTest := range mapToTest {
-
-		// <========================== Set ==========================>
-		b.Run("Set Test", func(childB *testing.B) {
-			testBookMap := mapToTest.init(childB.N)
-
-			key := make([][]byte, childB.N)
-			value := make([][]byte, childB.N)
-
-			for i := 0; i < childB.N; i++ {
-				key[i] = []byte(fmt.Sprintf("Client-%v", i))
-				value[i] = []byte(fmt.Sprintf("Customer-%v", i))
-			}
-
-			var iteration atomic.Uint64
-
-			childB.ResetTimer()
-			childB.ReportAllocs()
-
-			childB.RunParallel(func(setPb *testing.PB) {
-				for setPb.Next() {
-					idx := iteration.Add(1) - 1
-					testBookMap.Set(key[int(idx)], value[int(idx)])
+				for i := 0; i < lC; i++ {
+					key[i] = []byte(fmt.Sprintf("Input-%v", i))
+					val[i] = []byte(fmt.Sprintf("Val-%v", i))
 				}
-			})
-		})
 
-		// <========================== Get ==========================>
-		b.Run("Get Test", func(childB *testing.B) {
-			testBookMap := mapToTest.init(childB.N)
-			mutex := sync.Mutex{}
+				workers := runtime.GOMAXPROCS(0)
+				pairRange := lC / workers
 
-			key := make([][]byte, childB.N)
-			value := make([][]byte, childB.N)
+				runtime.GC()
+				childB.ReportAllocs() // cleans up physical ram (keeps the key and val but removes the string objects [ or ig structs ._. ])
+				childB.ResetTimer()   // does not clean up physical ram, just the metrics (the results)
 
-			for i := 0; i < childB.N; i++ {
-				key[i] = []byte(fmt.Sprintf("User-%v", i))
-				value[i] = []byte(fmt.Sprintf("User-%v", i))
-				testBookMap.Set(key[i], value[i])
-			}
+				for i := 0; i < childB.N; i++ { // simulates .RunParallel()
+					mapToTest := mC.init(lC)
+					var wg sync.WaitGroup
+					wg.Add(workers)
 
-			var iteration atomic.Uint64
+					for w := 0; w < workers; w++ {
+						start := w * pairRange
+						end := start + pairRange
+						if w == workers-1 {
+							end = lC
+						}
 
-			childB.ResetTimer()
-			childB.ReportAllocs()
-
-			childB.RunParallel(func(getPb *testing.PB) {
-				var localFaucet []byte
-				localDst := make([]byte, 1024)
-
-				// still gets allocated | 10 * (1024) B / b.N (# of operations) rounded to integers
-
-				for getPb.Next() {
-					faucet, status := testBookMap.Get(key[int(iteration.Add(1)-1)], localDst)
-					if status {
-						localFaucet = faucet
+						go func(low, high int) {
+							defer wg.Done()
+							for k := low; k < high; k++ {
+								mapToTest.Set(key[k], val[k])
+							}
+						}(start, end)
 					}
+					wg.Wait()
 				}
-				mutex.Lock()
-				globalSink = localFaucet
-				mutex.Unlock()
 			})
-		})
+		}
+	}
+}
 
-		// <========================== Delete ==========================>
-		b.Run("Delete Test", func(childB *testing.B) {
-			testBookMap := mapToTest.init(childB.N) 
+func BenchmarkMapCommands(b *testing.B) {
+	for _, mT := range mapTypes {
+		for _, lC := range loadCases {
+			for _, cName := range commandCases {
+				benchMarkName := fmt.Sprintf("%s/%s/Load-%d", mT.name, cName, lC)
+				b.Run(benchMarkName, func(childB *testing.B) {
+					mapToTest := mT.init(lC)
 
-			keys := make([][]byte, childB.N)
-			values := make([][]byte, childB.N)
+					key := make([][]byte, lC)
+					val := make([][]byte, lC)
 
-			for i := 0; i < childB.N; i++ {
-				keys[i] = []byte(fmt.Sprintf("User-%v", i))
-				values[i] = []byte(fmt.Sprintf("User-%v", i))
-				testBookMap.Set(keys[i], values[i])
+					for i := 0; i < lC; i++ {
+						key[i] = []byte(fmt.Sprintf("Input-%v", i))
+						val[i] = []byte(fmt.Sprintf("Val-%v", i))
+					}
+
+					for k := 0; k < lC; k++ {
+						mapToTest.Set(key[k], val[k])
+					}
+
+					var safeIndex atomic.Uint32
+					var globalIdx atomic.Uint32
+					workers := runtime.GOMAXPROCS(0)
+					globalSink = make([]int, workers)
+
+					var bufferPool = sync.Pool{
+						New: func() any {
+							bufferPtr := make([]byte, 1024)
+							return &bufferPtr
+						},
+					}
+
+					runtime.GC()
+					childB.ReportAllocs()
+					childB.ResetTimer()
+
+					b.RunParallel(func(pb *testing.PB) {
+						localIdx := int(globalIdx.Add(1) - 1)
+						var accumulator int
+						for pb.Next() {
+							idx := int(safeIndex.Add(1)-1) % lC
+
+							buff := bufferPool.Get().(*[]byte)
+							buffHeader := (*buff)
+
+							localFaucet, found := mapToTest.Get(key[idx], buffHeader)
+							if found {
+								accumulator += len(localFaucet)
+							}
+							*buff = (*buff)[:cap(*buff)]
+							clear(*buff)
+							bufferPool.Put(buff)
+						}
+						globalSink[localIdx] = accumulator
+					})
+				})
 			}
 
-			var iteration atomic.Uint64
-
-			childB.ReportAllocs()
-			childB.ResetTimer()
-
-			childB.RunParallel(func(pb *testing.PB) {
-				for pb.Next() {
-					testBookMap.Delete(keys[int(iteration.Add(1)-1)])
-				}
-			})
-		})
+		}
 	}
 }

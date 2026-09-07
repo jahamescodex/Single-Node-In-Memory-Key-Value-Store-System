@@ -23,11 +23,18 @@ func (c *contactBookMap) Set(key []byte, val []byte) { //recieve a struct which 
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
+	sKey := string(key)
+
+	if rec, exists := c.contactBook[sKey]; exists {
+		rec.data = append(rec.data[:0], val...)
+		return
+	}
+
 	c.counterOPS++ // 1 - Key : Value
 
 	copyVal := make([]byte, len(val)) // this is the 24byte struct, allocated on the function execution stack frame; this contains a pointer that points to the backing array that is on the heap
 	copy(copyVal, val)                //dst, src
-	c.contactBook[string(key)] = Record{
+	c.contactBook[sKey] = Record{
 		data: copyVal,
 		ID:   c.counterOPS,
 	} // increased the length of the map
@@ -41,8 +48,8 @@ func (c *contactBookMap) Get(key []byte, copyVal []byte) ([]byte, bool) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
-	rec, ok := c.contactBook[string(key)]
-	if !ok {
+	rec, exists := c.contactBook[string(key)]
+	if !exists {
 		return nil, false
 	}
 
