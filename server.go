@@ -15,6 +15,7 @@ var size = []byte("ERROR: Arguments too big\n")
 var emptyVal = []byte("Null\n")
 var success = []byte("Success\n")
 var nonCommand = []byte("Please enter a valid command\n")
+var newLine = []byte("\n")
 
 var bufferPool = sync.Pool{
 	New: func() any {
@@ -34,10 +35,10 @@ func process(s *Server, conn net.Conn, c Store, parentWaitGroup *sync.WaitGroup)
 
 	defer conn.Close() // LIFO
 
-	handleClient(conn, c, &bufferPool)
+	handleClient(conn, c)
 }
 
-func handleClient(conn net.Conn, c Store, bufferPool *sync.Pool) {
+func handleClient(conn net.Conn, c Store) {
 	log.Printf("Client: %s just connected\n", conn.RemoteAddr())
 	buffHeaderPtr := bufferPool.Get().(*[]byte) // pointing to the 24-byte struct byte slice-header
 
@@ -72,7 +73,7 @@ func handleClient(conn net.Conn, c Store, bufferPool *sync.Pool) {
 				break
 			} else {
 				commandLine := fullBuffer[:idx+1] // cuts the 'ribbon' into the command line
-				execute(conn, commandLine, c, bufferPool)
+				handleCommand(conn, commandLine, c)
 				copy(fullBuffer, fullBuffer[idx+1:processed]) // shifts the ribbon back
 				processed -= (idx + 1)
 			}
@@ -80,7 +81,7 @@ func handleClient(conn net.Conn, c Store, bufferPool *sync.Pool) {
 	}
 }
 
-func execute(conn net.Conn, commandLine []byte, c Store, bufferPool *sync.Pool) {
+func handleCommand(conn net.Conn, commandLine []byte, c Store) {
 	commandLine = bytes.TrimSpace(commandLine) // clears leading /n /r or white spaces
 
 	if len(commandLine) == 0 {
@@ -88,49 +89,62 @@ func execute(conn net.Conn, commandLine []byte, c Store, bufferPool *sync.Pool) 
 		return
 	}
 
-	split := bytes.SplitN(commandLine, []byte(" "), 3) // slice of byte slices [ []byte, []byte ]
-	command := split[0]                                // ['Get'] in binary
-	args := split[1:]
+	cmd, arg, success := bytes.Cut(commandLine, []byte(" "))
 
-	for i := range command {
-		if command[i] >= 'a' && command[i] <= 'z' {
-			command[i] -= 32
+	for i := 0; i < len(cmd); i++ {
+		if cmd[i] >= 'a' && cmd[i] <= 'z' {
+			cmd[i] -= 32
 		}
 	}
 
+	if !success {
+		execute(cmd, nil, nil, c, conn)
+		return
+	}
+
+	key, value, success := bytes.Cut(arg, []byte(" "))
+	if !success {
+		execute(cmd, arg, nil, c, conn)
+		return
+	}
+
+	execute(cmd, key, value, c, conn)
+}
+
+func execute(command []byte, key []byte, value []byte, c Store, conn net.Conn) {
 	switch string(command) {
 	case "SET":
-		if len(args) != 2 {
+		if key == nil || value == nil {
 			conn.Write(invalid)
 			return
 		}
-		c.Set((args[0]), args[1])
+		c.Set(key, value)
 		conn.Write(success)
 	case "GET":
-		if len(args) != 1 {
+		if key == nil {
 			conn.Write(invalid)
 			return
 		}
 		buffHeaderPtr := bufferPool.Get().(*[]byte)
 		dst := *buffHeaderPtr
 		defer func() {
+			*buffHeaderPtr = (*buffHeaderPtr)[:cap((*buffHeaderPtr))]
 			clear(*buffHeaderPtr)
 			bufferPool.Put(buffHeaderPtr)
 		}()
-		dst = dst[:1024] //stretches length up to cap
-		dst, ok := c.Get((args[0]), dst)
-		if !ok {
+		dst, exists := c.Get(key, dst)
+		if !exists {
 			conn.Write(emptyVal)
 			return
 		}
 		conn.Write(dst)
-		conn.Write(success)
+		conn.Write(newLine)
 	case "DELETE":
-		if len(args) != 1 {
+		if key == nil {
 			conn.Write(invalid)
 			return
 		}
-		c.Delete(args[0])
+		c.Delete(key)
 		conn.Write(success)
 	case "LIST":
 		buffer := bufferPool.Get().(*[]byte)
