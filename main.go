@@ -93,7 +93,7 @@ func NewServer(listenerAddr string, storage Store) *Server { // store in this ca
 
 func main() {
 	// contactBook := NewContactBookMap(1024)
-	shardedContactBookMap := MakeShardedMap(16, 1024) // Store implementation
+	shardedContactBookMap := NewShardedMap(16, 1024) // Store implementation
 	serverAddr := NewServer(":3000", shardedContactBookMap)
 	if err := serverAddr.Start(); err != nil {
 		log.Fatalf("Server exited with error: %v", err)
